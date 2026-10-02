@@ -91,6 +91,9 @@ export function useUsage(providerId: string | undefined, range: UsageRange) {
     queryKey: ["usage", providerId, start, end],
     enabled: Boolean(providerId),
     retry: shouldRetry,
+    // Loopback fetches: attempt even when the browser reports offline, so
+    // connectivity problems surface as errors instead of silent pauses.
+    networkMode: "always",
     queryFn: async () => {
       const params = new URLSearchParams({
         provider: providerId!,

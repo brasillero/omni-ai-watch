@@ -35,8 +35,8 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 const numberFormat = new Intl.NumberFormat()
 
 const chartConfig = {
-  input: { label: "Input", color: "var(--color-chart-1)" },
-  output: { label: "Output", color: "var(--color-chart-2)" },
+  inputTokens: { label: "Input", color: "var(--color-chart-1)" },
+  outputTokens: { label: "Output", color: "var(--color-chart-2)" },
 } satisfies ChartConfig
 
 function hasTokens(bucket: UsageBucket) {
@@ -53,12 +53,8 @@ function toChartData(buckets: UsageBucket[], range: UsageRange) {
     byDay.set(key, day)
   }
 
-  const now = new Date()
-  const todayStartMs = Date.UTC(
-    now.getUTCFullYear(),
-    now.getUTCMonth(),
-    now.getUTCDate(),
-  )
+  // The partial day is the last day of the range (range is day-aligned UTC).
+  const partialDayStartMs = range.end.getTime() - 86_400_000
   const dayLabel = new Intl.DateTimeFormat("en", {
     month: "short",
     day: "numeric",
@@ -74,7 +70,7 @@ function toChartData(buckets: UsageBucket[], range: UsageRange) {
     const key = d.toISOString().slice(0, 10)
     const usage = byDay.get(key) ?? { input: 0, output: 0 }
     days.push({
-      day: dayLabel.format(d) + (d.getTime() >= todayStartMs ? "*" : ""),
+      day: dayLabel.format(d) + (d.getTime() >= partialDayStartMs ? "*" : ""),
       input: usage.input,
       output: usage.output,
     })
@@ -83,7 +79,7 @@ function toChartData(buckets: UsageBucket[], range: UsageRange) {
 }
 
 export function Dashboard() {
-  const [range] = useState(getDefaultRange)
+  const [range, setRange] = useState(getDefaultRange)
   const providersQuery = useProviders()
   const providers = providersQuery.data?.providers ?? []
 
@@ -104,6 +100,8 @@ export function Dashboard() {
   const outputTotal = activeBuckets.reduce((sum, b) => sum + b.outputTokens, 0)
 
   const refresh = () => {
+    // Recompute the window so long-lived tabs don't keep querying yesterday.
+    setRange(getDefaultRange())
     providersQuery.refetch()
     if (selected?.configured) usageQuery.refetch()
   }
@@ -161,6 +159,7 @@ export function Dashboard() {
       <DashboardBody
         providersError={providersQuery.error}
         usageError={usageQuery.error}
+        usageSuccess={usageQuery.isSuccess}
         isLoading={providersQuery.isPending || usageQuery.isLoading}
         provider={selected}
         hasData={activeBuckets.length > 0}
@@ -176,6 +175,7 @@ export function Dashboard() {
 function DashboardBody({
   providersError,
   usageError,
+  usageSuccess,
   isLoading,
   provider,
   hasData,
@@ -186,6 +186,7 @@ function DashboardBody({
 }: {
   providersError: unknown
   usageError: unknown
+  usageSuccess: boolean
   isLoading: boolean
   provider?: ProviderInfo
   hasData: boolean
@@ -198,7 +199,9 @@ function DashboardBody({
 
   if (isLoading) return <LoadingState />
 
-  if (error) {
+  // Show the full error card only when nothing has loaded yet; a failed
+  // refetch keeps the last successful data visible (with a notice below).
+  if (error && !hasData) {
     const apiError = error instanceof ApiError ? error : null
     if (apiError?.status === 503 && provider) {
       return <MissingCredentials provider={provider} />
@@ -229,7 +232,9 @@ function DashboardBody({
     return <MissingCredentials provider={provider} />
   }
 
-  if (!hasData) {
+  // Only claim "no usage" after a successful fetch — a paused/never-run
+  // query (e.g. offline at load) must not look like a confirmed empty result.
+  if (usageSuccess && !hasData) {
     return (
       <Card>
         <CardHeader>
@@ -242,10 +247,27 @@ function DashboardBody({
     )
   }
 
+  if (!hasData) return <LoadingState />
+
   const compact = new Intl.NumberFormat("en", { notation: "compact" })
 
   return (
     <>
+      {usageError && (
+        <Card className="border-destructive/50">
+          <CardHeader>
+            <CardTitle className="text-base">
+              Refresh failed — showing last successful data
+            </CardTitle>
+            <CardDescription>
+              {usageError instanceof Error
+                ? usageError.message
+                : "Unknown error"}
+            </CardDescription>
+          </CardHeader>
+        </Card>
+      )}
+
       <div className="grid gap-4 sm:grid-cols-3">
         <StatCard title="Input tokens" value={inputTotal} />
         <StatCard title="Output tokens" value={outputTotal} />
@@ -277,14 +299,14 @@ function DashboardBody({
               />
               <ChartTooltip content={<ChartTooltipContent />} />
               <Bar
-                dataKey="input"
+                dataKey="inputTokens"
                 stackId="tokens"
-                fill="var(--color-input)"
+                fill="var(--color-inputTokens)"
               />
               <Bar
-                dataKey="output"
+                dataKey="outputTokens"
                 stackId="tokens"
-                fill="var(--color-output)"
+                fill="var(--color-outputTokens)"
                 radius={[4, 4, 0, 0]}
               />
             </BarChart>

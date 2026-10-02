@@ -68,9 +68,19 @@ async function fetchReport<T>(
     }
     if (page) params.set("page", page)
 
-    const res = await fetch(`${API_BASE}${path}?${params}`, {
-      headers: buildHeaders(config),
-    })
+    let res: Response
+    try {
+      res = await fetch(`${API_BASE}${path}?${params}`, {
+        headers: buildHeaders(config),
+      })
+    } catch (error) {
+      throw new ProviderError(
+        "anthropic",
+        `Anthropic ${path} request failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      )
+    }
 
     if (!res.ok) {
       const body = await res.text().catch(() => "")
@@ -81,7 +91,16 @@ async function fetchReport<T>(
       )
     }
 
-    const json = (await res.json()) as AnthropicReportResponse<T>
+    let json: AnthropicReportResponse<T>
+    try {
+      json = (await res.json()) as AnthropicReportResponse<T>
+    } catch {
+      throw new ProviderError(
+        "anthropic",
+        `Anthropic ${path} returned a non-JSON body (status ${res.status})`,
+        res.status,
+      )
+    }
     rows.push(...(json.data ?? []))
     page = json.has_more ? (json.next_page ?? null) : null
   } while (page)
@@ -132,7 +151,9 @@ export const anthropicProvider: UsageProvider = {
             (result.cache_read_input_tokens ?? 0) +
             cacheCreation,
           outputTokens: result.output_tokens ?? 0,
-          cachedInputTokens: result.cache_read_input_tokens ?? 0,
+          // Absent field means "unknown" — do not report a fabricated zero
+          // (kept consistent with the OpenAI adapter).
+          cachedInputTokens: result.cache_read_input_tokens,
           dimensions: {
             ...(result.workspace_id
               ? { workspace: result.workspace_id }

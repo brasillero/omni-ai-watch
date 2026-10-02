@@ -4,6 +4,13 @@ import { ProviderError, type BucketWidth } from "@/lib/providers/types"
 
 const BUCKET_WIDTHS: BucketWidth[] = ["1m", "1h", "1d"]
 
+/** Maximum time span per bucket width, to bound upstream pagination. */
+const MAX_SPAN_MS: Record<BucketWidth, number> = {
+  "1m": 24 * 3_600_000, // 1 day
+  "1h": 31 * 24 * 3_600_000, // 31 days
+  "1d": 366 * 24 * 3_600_000, // 1 year
+}
+
 export async function GET(request: NextRequest) {
   const params = request.nextUrl.searchParams
   const providerId = params.get("provider")
@@ -36,6 +43,16 @@ export async function GET(request: NextRequest) {
   if (start >= end) {
     return Response.json({ error: "start must be before end" }, { status: 400 })
   }
+  const spanMs = end.getTime() - start.getTime()
+  if (spanMs > MAX_SPAN_MS[bucketWidth]) {
+    return Response.json(
+      {
+        error: `Range too large for bucket_width=${bucketWidth}`,
+        maxSpanMs: MAX_SPAN_MS[bucketWidth],
+      },
+      { status: 400 },
+    )
+  }
 
   const provider = getProvider(providerId)
   if (!provider) {
@@ -58,9 +75,11 @@ export async function GET(request: NextRequest) {
 
   try {
     const usagePromise = provider.fetchUsage(config, { start, end, bucketWidth })
+    // Vendor cost endpoints only support daily buckets — never propagate
+    // the caller's width, or a 1h/1m request would fail wholesale.
     const costsPromise =
       includeCosts && provider.fetchCosts
-        ? provider.fetchCosts(config, { start, end, bucketWidth })
+        ? provider.fetchCosts(config, { start, end, bucketWidth: "1d" })
         : Promise.resolve(undefined)
     const [usage, costs] = await Promise.all([usagePromise, costsPromise])
 
@@ -79,6 +98,14 @@ export async function GET(request: NextRequest) {
         { status: 502 },
       )
     }
-    throw error
+    // Unknown errors (network blips, malformed vendor bodies) still get a
+    // JSON body instead of a bodyless 500.
+    return Response.json(
+      {
+        error: "Failed to fetch usage",
+        detail: error instanceof Error ? error.message : String(error),
+      },
+      { status: 502 },
+    )
   }
 }

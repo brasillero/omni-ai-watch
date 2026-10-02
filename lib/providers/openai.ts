@@ -51,12 +51,22 @@ async function fetchUsageEndpoint(
     }
     if (page) params.set("page", page)
 
-    const res = await fetch(`${API_BASE}${path}?${params}`, {
-      headers: {
-        Authorization: `Bearer ${config.apiKey}`,
-        "Content-Type": "application/json",
-      },
-    })
+    let res: Response
+    try {
+      res = await fetch(`${API_BASE}${path}?${params}`, {
+        headers: {
+          Authorization: `Bearer ${config.apiKey}`,
+          "Content-Type": "application/json",
+        },
+      })
+    } catch (error) {
+      throw new ProviderError(
+        "openai",
+        `OpenAI ${path} request failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      )
+    }
 
     if (!res.ok) {
       const body = await res.text().catch(() => "")
@@ -67,7 +77,16 @@ async function fetchUsageEndpoint(
       )
     }
 
-    const json = (await res.json()) as OpenAiListResponse
+    let json: OpenAiListResponse
+    try {
+      json = (await res.json()) as OpenAiListResponse
+    } catch {
+      throw new ProviderError(
+        "openai",
+        `OpenAI ${path} returned a non-JSON body (status ${res.status})`,
+        res.status,
+      )
+    }
     buckets.push(...(json.data ?? []))
     page = json.next_page ?? null
   } while (page)
