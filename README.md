@@ -1,5 +1,32 @@
 # omni-ai-watch
 
+> **ARCHIVED (2026-10-01) — the original goal is not achievable.**
+>
+> This project set out to track spending/usage of AI **subscription plans**
+> (Claude Pro/Max 5h & weekly windows, ChatGPT plans, Kimi) in one place.
+> Investigation showed this is not possible through sanctioned means:
+>
+> - **Anthropic** — plan quotas are only readable via an undocumented OAuth
+>   endpoint, and Anthropic's terms **prohibit third-party apps from offering
+>   Claude.ai login or storing/intermediating Claude.ai tokens**. The only
+>   documented channel (the Claude Code statusline) is local and tied to
+>   Claude Code activity. See
+>   [code.claude.com/docs/en/legal-and-compliance](https://code.claude.com/docs/en/legal-and-compliance).
+> - **OpenAI** — no API exists for ChatGPT plan quotas/spending at all.
+> - **Kimi/Moonshot** — an official API exposes account *balance* only;
+>   subscription quotas have no official remote API.
+>
+> Subscription prices are fixed and already known; what cannot be tracked is
+> *plan utilization*. With that gone, the tool's core value disappeared.
+>
+> **What still works** (kept for reference): API *usage/cost* tracking via
+> official organization Admin APIs (OpenAI + Anthropic adapters, dashboard,
+> tests), documented in `docs/ROADMAP.md`. `docs/ROADMAP.md` also records the
+> full phased plan, the provider findings, and the security/credentials
+> decisions — useful to anyone revisiting this problem.
+
+---
+
 App to monitor AI usage across multiple plans on multiple AI providers.
 
 Local-first: runs on your machine, credentials stay in `.env.local`.
