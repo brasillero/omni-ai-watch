@@ -8,10 +8,12 @@ Local-first: runs on your machine, credentials stay in `.env.local`.
 
 ```bash
 pnpm install
-pnpm dev --hostname 127.0.0.1
+pnpm dev
 ```
 
-Open http://127.0.0.1:3000.
+Open http://127.0.0.1:3000. The dev/start scripts bind to loopback
+(`--hostname 127.0.0.1`) by default — the API routes are intentionally
+authless, so keep it that way.
 
 ## Provider credentials
 
