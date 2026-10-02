@@ -33,27 +33,28 @@ Implement one phase at a time. **Phase 1 is a useful stopping point**; later arc
 
 - Validate both existing adapters against current vendor schemas and pagination.
 - Add capability metadata: historical token usage, costs, balance, reported quotas, and supported resolutions.
-- Add Moonshot’s official balance connector.
-- Qualify an optional Kimi Code local connector for reported quota snapshots; collect this signal here and visualize its quota windows in Phase 3.
+- Add a `fetchQuotaSnapshot` capability for provider-reported subscription windows (5h rolling, weekly, …) — the original product goal. First implementation: Anthropic via OAuth login (Claude Code-style token, `org:admin` scope), which reports Pro/Max subscription utilization and reset times. Store tokens in the server-side credential store (per the security review); the browser holds only a session cookie.
+- Add Moonshot's official balance connector (`api.moonshot.ai/v1/users/me/balance`) — remote, official, no local components.
 - Show unsupported history explicitly. Keep one source selectable at a time.
 
 **NOT in this phase:**
 
 - A quota calculation engine or durable manual ingest.
-- Private-console scraping, an app-owned OAuth flow, a request proxy, or further providers.
+- Private-console scraping, a request proxy, or further providers.
+- **Kimi subscription quotas: ON HOLD.** The only quota-reporting surfaces are the experimental local `kimi web` server API (rejected — must not depend on a local component) and the undocumented hosted `/usages` endpoint (rejected — no official contract). Revisit only if Moonshot publishes an official remote API; until then Kimi shows balance only.
 
 **Exit gate:** Every enabled connector returns a supported signal, and unsupported operations produce an explicit unavailable state.
 
 ### Phase 3 — Quota and budget visualization
 
-**Scope:** Display user-defined limits across rolling, weekly, monthly, and total windows.
+**Scope:** Display provider-reported subscription windows and user-defined limits across rolling, weekly, monthly, and total windows.
 
 **Deliverables:**
 
 - A gitignored `config/quotas.local.json`, a committed example, and lightweight runtime validation.
 - A quota evaluator and `/api/quotas` endpoint that fetch the full required window independently of the dashboard’s selected range.
 - Progress cards showing used, remaining, percentage, reset/expiry information, measurement source, and incomplete coverage.
-- Display Kimi Code’s reported quota ratios when its optional connector is available.
+- Render Anthropic's reported subscription ratios directly (OAuth connector from Phase 2), preserving provider reset times; never translate them into tokens or mix with local estimates.
 - Enable USD budgets after correcting the existing cost adapters. Query reported costs at daily resolution and isolate cost failures from token usage.
 - Permit explicit manual observations when subscription consumption is otherwise unavailable.
 
@@ -171,7 +172,7 @@ For persistence, record account scope, interval, resolution, dimensions, source,
 
 The official client source also calls `/usages` under `https://api.kimi.com/coding/v1`, with a global base at `https://api.kimi.ai/coding/v1`, using a bearer access token. This is a vendor-client endpoint visible in source, without an established stable public reporting contract. API-key access was not verified here. [Official client source](https://github.com/MoonshotAI/kimi-code/blob/main/packages/oauth/src/managed-usage.ts)
 
-**Recommendation:** Add official Moonshot balance support in Phase 2. Prefer an opt-in local Kimi Code bridge for subscription snapshots. Defer direct hosted `/usages` integration. Add captured token history through `/api/ingest` in Phase 4; today that route acknowledges events but stores nothing.
+**Recommendation (updated 2026-10-01):** Add official Moonshot balance support in Phase 2 — it is remote and official. **Kimi subscription quotas are ON HOLD**: the only quota-reporting surfaces are the experimental *local* `kimi web` server API (rejected — no local components) and the undocumented hosted `/usages` endpoint (rejected — no official contract); revisit only if Moonshot ships an official remote API. Add captured token history through `/api/ingest` in Phase 4; today that route acknowledges events but stores nothing.
 
 ## 4. Quota model proposal
 
