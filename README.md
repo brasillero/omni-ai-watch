@@ -1,21 +1,38 @@
-# Next.js template
+# omni-ai-watch
 
-This is a Next.js template with shadcn/ui.
+App to monitor AI usage across multiple plans on multiple AI providers.
 
-## Adding components
+Local-first: runs on your machine, credentials stay in `.env.local`.
 
-To add components to your app, run the following command:
+## Run locally
 
 ```bash
-npx shadcn@latest add button
+pnpm install
+pnpm dev
 ```
 
-This will place the ui components in the `components` directory.
+Open http://127.0.0.1:3000. The dev/start scripts bind to loopback
+(`--hostname 127.0.0.1`) by default — the API routes are intentionally
+authless, so keep it that way.
 
-## Using components
+## Provider credentials
 
-To use the components in your app, import them as follows:
+Usage/cost endpoints require organization **Admin** keys, not regular
+project keys. Copy `.env.example` to `.env.local` (or create it) and fill in
+what you have — unconfigured providers show a setup hint on the dashboard.
 
-```tsx
-import { Button } from "@/components/ui/button";
-```
+| Env var | Provider | Required |
+|---|---|---|
+| `OPENAI_ADMIN_API_KEY` | OpenAI (`sk-admin-...`) | yes, for OpenAI |
+| `ANTHROPIC_ADMIN_API_KEY` | Anthropic (`sk-ant-admin01-...`) | yes, for Anthropic |
+| `ANTHROPIC_ORGANIZATION_ID` | Anthropic (`org_...`) | only if the key belongs to multiple orgs |
+
+Restart the dev server after changing `.env.local`.
+
+## Layout
+
+- `lib/providers/` — provider integrations (one file per provider + registry)
+- `app/api/` — `/api/providers`, `/api/usage`, `/api/ingest`
+- `docs/ROADMAP.md` — phased implementation plan
+- `components/ui/` — shadcn/ui (Base UI) components
+
