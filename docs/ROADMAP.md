@@ -1,121 +1,113 @@
 # omni-ai-watch implementation roadmap
 
-Research checked on **2026-10-01**. No files were modified. Provider credentials and live account responses were not tested.
+Research checked on **2026-10-01**; re-prioritized the same day to make plan/subscription quotas the main track. Provider credentials and live account responses were not tested.
 
 ## 1. Phased implementation plan
 
-Implement one phase at a time. **Phase 1 is a useful stopping point**; later architecture should not become a prerequisite for displaying usage.
+**Re-prioritized 2026-10-01.** The product goal is **plan/subscription quota monitoring** — the 5-hour rolling window, weekly limits, and similar caps on Claude Pro/Max-style subscriptions — across providers. API usage is not subscription usage: organization Admin usage APIs report pay-as-you-go API activity and say nothing about plan quotas. The plan has two tracks:
 
-### Phase 1 — Basic local usage visualization
+- **Main track — plan quotas (Phases 1–4).** Built on OAuth-based subscription connectors and user-defined quotas.
+- **Side track — API usage (deferred).** The existing Admin-API adapters, dashboard, tests, `/api/usage`, and `/api/providers` stay in the repo and keep working, but are not the priority. See Section 1b.
 
-**Scope:** Display token usage from the existing OpenAI and Anthropic adapters, one provider at a time.
+Implement one phase at a time. **Phase 1 is a useful stopping point**; later architecture must not become a prerequisite for displaying a quota.
 
-**Deliverables:**
+### Credential and security decisions (apply to every phase)
 
-- Replace the placeholder page with a provider selector, input/output/total token counts, and one daily stacked chart for the last seven days.
-- Use `/api/providers` and `/api/usage` with `bucket_width=1d&costs=false`.
-- Show loading, empty, missing-credentials, and fetch-error states, plus last successful refresh. Mark the current day as partial.
-- Correct Anthropic token normalization before displaying totals; define consistent cache semantics as described in Section 2.
-- Document env setup and local startup with `pnpm dev --hostname 127.0.0.1`.
+- Credentials (OAuth tokens, API keys) are stored **server-side only**: a local SQLite store with secrets held in the OS keyring (a minimal file-based server-side store is acceptable until SQLite lands, never committed and never sent to the browser).
+- The browser holds only an **opaque session cookie**. Never put keys or tokens in cookies, `localStorage`, or client bundles.
+- The app binds to **127.0.0.1** by default (`pnpm dev`/`pnpm start` already do).
+- No local companion components, no private-console scraping, no browser-cookie harvesting.
 
-**NOT in this phase:**
+## 1a. Main track — plan/subscription quota monitoring
 
-- Costs, quotas, Kimi integration, persistence, or ingest visualization.
-- Custom date pickers, model filters, settings screens, background polling, or multi-plan support.
+### Phase 1 — Anthropic reported quota snapshot
 
-**Exit gate:** At least one real configured provider displays totals that agree with its console for the same reporting interval. Verify normalization and pagination with focused fixtures; run lint, typecheck, and build during implementation.
-
-### Phase 2 — Provider expansion, including Kimi where supported
-
-**Scope:** Complete coverage of the selected providers without pretending they expose equivalent data.
+**Scope:** The smallest useful subscription-quota milestone: show one Claude Pro/Max account's provider-reported windows.
 
 **Deliverables:**
 
-- Validate both existing adapters against current vendor schemas and pagination.
-- Add capability metadata: historical token usage, costs, balance, reported quotas, and supported resolutions.
-- Add a `fetchQuotaSnapshot` capability for provider-reported subscription windows (5h rolling, weekly, …) — the original product goal. First implementation: Anthropic via OAuth login (Claude Code-style token, `org:admin` scope), which reports Pro/Max subscription utilization and reset times. Store tokens in the server-side credential store (per the security review); the browser holds only a session cookie.
-- Add Moonshot's official balance connector (`api.moonshot.ai/v1/users/me/balance`) — remote, official, no local components.
-- Show unsupported history explicitly. Keep one source selectable at a time.
+- Anthropic OAuth login (Claude Code-style flow, `org:admin` scope) started from the app; the callback exchanges the code server-side.
+- A minimal server-side token store per the security decisions above, including refresh-token handling and an explicit "re-login required" state.
+- A `fetchQuotaSnapshot` capability and adapter for Anthropic's reported subscription utilization (5h and weekly windows, utilization ratio, reset times). The endpoint is undocumented but used by first-party clients — isolate it behind the adapter and validate the response shape at runtime.
+- A `/api/quotas` route returning the normalized snapshot (no tokens in the response).
+- A minimal UI: one card per reported window showing used/remaining percentage, reset time (absolute and relative), fetched-at time, and loading/error/unauthenticated states. Manual refresh only.
 
 **NOT in this phase:**
 
-- A quota calculation engine or durable manual ingest.
-- Private-console scraping, a request proxy, or further providers.
+- Other providers, multiple accounts, connection-management screens, persistence of history, notifications, or polling.
+- Translating reported ratios into tokens or combining them with API-usage data.
+
+**Exit gate:** After logging in, the displayed 5h and weekly utilization and reset times match what Claude reports for the same account. Tokens never appear in browser storage, network responses, or logs. Fixture tests cover snapshot parsing and missing/unknown windows; lint, typecheck, and build pass.
+
+### Phase 2 — Connection and credential management
+
+**Scope:** Make subscription connections manageable instead of single-shot.
+
+**Deliverables:**
+
+- A connections UI: add, rename, re-authenticate, and remove connections; show status (connected, expired, error) and last successful fetch.
+- Move the token store to SQLite + OS keyring with versioned migrations; no ORM required.
+- Capability metadata per connector: reported quotas, balance, historical usage. Unsupported capabilities render an explicit unavailable state.
+- Multiple Anthropic accounts side by side; quota snapshots stored with fetched-at time so the last good value survives a failed refresh.
+- Add Moonshot's official balance connector (`api.moonshot.ai/v1/users/me/balance`) — remote, official, no local components. Shown as a balance, not a quota.
+
+**NOT in this phase:**
+
+- User-defined quotas, history charts, forecasting, or notifications.
 - **Kimi subscription quotas: ON HOLD.** The only quota-reporting surfaces are the experimental local `kimi web` server API (rejected — must not depend on a local component) and the undocumented hosted `/usages` endpoint (rejected — no official contract). Revisit only if Moonshot publishes an official remote API; until then Kimi shows balance only.
 
-**Exit gate:** Every enabled connector returns a supported signal, and unsupported operations produce an explicit unavailable state.
+**Exit gate:** Connections survive restart; removing a connection deletes its secret from the keyring; an expired token produces a re-login prompt rather than a blank card.
 
-### Phase 3 — Quota and budget visualization
+### Phase 3 — User-defined quotas for providers without reported quotas
 
-**Scope:** Display provider-reported subscription windows and user-defined limits across rolling, weekly, monthly, and total windows.
-
-**Deliverables:**
-
-- A gitignored `config/quotas.local.json`, a committed example, and lightweight runtime validation.
-- A quota evaluator and `/api/quotas` endpoint that fetch the full required window independently of the dashboard’s selected range.
-- Progress cards showing used, remaining, percentage, reset/expiry information, measurement source, and incomplete coverage.
-- Render Anthropic's reported subscription ratios directly (OAuth connector from Phase 2), preserving provider reset times; never translate them into tokens or mix with local estimates.
-- Enable USD budgets after correcting the existing cost adapters. Query reported costs at daily resolution and isolate cost failures from token usage.
-- Permit explicit manual observations when subscription consumption is otherwise unavailable.
-
-**NOT in this phase:**
-
-- Usage persistence, a configuration editor, forecasting, notifications, or quota enforcement.
-- Automatic discovery of subscription limits or conversion of tokens into undocumented subscription credits.
-
-**Exit gate:** Window boundaries, cache counting, partial buckets, and missing measurements behave correctly. Unsupported measurements display “unknown,” rather than zero.
-
-### Phase 4 — Persistence and data model
-
-**Scope:** Preserve history locally and make `/api/ingest` useful.
+**Scope:** Track plans whose provider exposes no quota API — notably OpenAI/ChatGPT, which has **no plan-quota API at all**.
 
 **Deliverables:**
 
-- One local SQLite database, a small storage module, and versioned migrations; no ORM required.
-- Store provider buckets, ingested events, quota/balance snapshots, and fetch coverage.
-- Add stable source IDs and event IDs; make ingestion durable and idempotent.
-- Tighten ingest validation, including malformed event objects and cached-token values.
-- Let dashboard and quota queries use stored observations, with explicit refresh and stale-data status.
-- Support Moonshot token history through user-supplied scripts or hooks that capture actual request usage.
+- User-defined quota definitions (Section 4): label, scope, metric, limit, and rolling/weekly/monthly/total window, with reset anchors and timezone.
+- Manual observations: the user records a reading ("ChatGPT Plus: 60% of weekly limit at 14:00") or a budget; the app shows it with its observation time and ages it explicitly.
+- Optional derived measurements where a real signal exists (e.g. captured request tokens via `/api/ingest`, or API-usage buckets from the side track) — always labeled with their source and coverage.
+- Unified quota cards that render provider-reported and user-defined quotas with the same layout but a visible measurement-source label.
 
 **NOT in this phase:**
 
-- Multi-plan management, cloud sync, a background daemon, or a universal request interception layer.
-- Reconstructing individual requests from aggregate provider buckets.
+- Guessing subscription limits, scraping ChatGPT, or converting tokens into undocumented subscription credits.
+- Mixing reported ratios with local estimates in one number.
 
-**Exit gate:** Data survives restart; repeated ingestion and refreshes do not inflate totals; stored history remains viewable without provider access.
+**Exit gate:** Window boundaries and reset anchors evaluate correctly in tests; missing measurements display "unknown," never zero; stale manual observations are visibly stale.
 
-### Phase 5 — Multi-plan and multi-key
+### Phase 4 — Quota card polish and history
 
-**Scope:** Separate providers, credential connections, accounts, and plans.
+**Scope:** Make the quota view pleasant for daily use.
 
-**Deliverables:**
+**Deliverables:** Snapshot history per window (sparkline of utilization over the window), modest polling while the page is open, next-reset countdowns, local threshold indicators (e.g. card turns amber at 80%), and compact multi-account overview.
 
-- Named connections referencing env variables, with organization/project/workspace/key filters where available.
-- Named plans and explicit shared quota scopes.
-- Plan/source selection and comparisons.
-- Preserve supported attribution dimensions in normalized buckets.
-- Migrate each existing provider configuration into a default connection.
+**NOT in this phase:** Background daemons, external notification services, hosted sync, or automatic plan changes.
 
-**NOT in this phase:**
+**Exit gate:** Polling respects provider rate limits and stops when the tab is hidden; history does not duplicate snapshots across refreshes.
 
-- Team accounts, RBAC, credential synchronization, or automatic plan discovery.
-- Treating each API key as an independent subscription quota.
+### Phase 5 — Notifications (only if needed)
 
-**Exit gate:** Two connections to the same account do not duplicate organization totals; keys sharing one subscription also share its quota pool.
+**Scope:** Add alerts only after actual use shows the in-app indicators are insufficient.
 
-### Phase 6 — Optional convenience features
+**Deliverables:** Local desktop notifications for configurable thresholds and upcoming resets; no external services.
 
-**Scope:** Add individual features only after actual use demonstrates a need.
+**NOT in this phase:** Email/SMS/push services, hosted infrastructure, or predictive billing.
 
-**Deliverables:** Consider local configuration editing, CSV export, backup/restore, modest polling while the dashboard is open, and local threshold indicators.
+## 1b. Side track — API-usage monitoring (deferred, not the priority)
 
-**NOT in this phase:**
+Built in PR #1 and kept as-is: OpenAI and Anthropic Admin-API adapters (`lib/providers/`), the usage dashboard, tests, `/api/usage`, `/api/providers`, and the `/api/ingest` stub. Credentials for this track remain the env-configured org Admin keys. Work below resumes only when the main track no longer needs attention or a main-track phase needs it (e.g. Phase 3 derived measurements).
 
-- Hosted SaaS, external notification services, predictive billing, or broad observability infrastructure.
-- An inference gateway, browser-cookie scraping, or automatic purchasing/plan changes.
+**Known pending work (in rough order):**
 
-Defer additional usage modalities and providers until the user actually uses them. Keep a universal model-pricing engine outside this roadmap; prefer vendor-reported costs.
+- **Cost parser fixes** before enabling costs anywhere (details in Section 2): OpenAI `amount.value` is already in its currency (do not divide by 100); Anthropic `amount` is a decimal string in cents with a separate `currency`. Both cost endpoints are daily-only; isolate cost failures from token usage.
+- **Costs in the dashboard** and USD budgets, once parsers are fixed and verified against the consoles.
+- **Persistence:** store provider buckets, ingested events, and fetch coverage in the same SQLite database as the main track; replace refreshed aggregate buckets instead of summing snapshots.
+- **Ingest:** stable source/event IDs, durable idempotent ingestion, stricter validation, and authentication before accepting external writers. Moonshot token history via user-supplied capture scripts.
+- **Multi-key/multi-connection:** named connections with org/project/workspace filters; keys sharing one account must not duplicate totals.
+- **Extras:** CSV export, model filters, custom date ranges — only if actually used.
+
+**NOT on this track:** Treating API usage as subscription consumption, a universal model-pricing engine, or an inference gateway/request proxy.
 
 ## 2. Architecture assessment
 
@@ -139,21 +131,20 @@ If server-side prefetching becomes useful later, call the shared service directl
 
 | Phase | Architectural change |
 |---|---|
-| 1 | Keep existing endpoints and registry. Add dashboard aggregation helpers and correct token normalization. |
-| 2 | Make historical `fetchUsage` optional; add optional `fetchBalance` and `fetchQuotaSnapshot`. Expose capabilities and reject unsupported usage requests explicitly. Add a small status endpoint for snapshots. Mark credential requirements as required or optional. |
-| 3 | Add pure window/aggregation functions in `lib/quotas/`. Read local configuration on the server. Extract a small usage service shared by route handlers and quota evaluation. |
-| 4 | Insert SQLite reads/writes in that service. Providers remain responsible only for fetching and normalization. TanStack Query remains the browser cache. |
-| 5 | Move configuration checks to connection instances. Resolve source IDs into server-side credentials and filters; retain provider implementations as reusable adapters. |
-| 6 | Extend local configuration/storage services only for selected convenience features. |
+| Main 1 | Make historical `fetchUsage` optional; add optional `fetchQuotaSnapshot`. Add an OAuth callback route, a server-only token store module, and `/api/quotas`. Keep the existing API-usage registry untouched. |
+| Main 2 | Move credentials to SQLite + OS keyring; introduce connection instances that resolve to server-side credentials. Add optional `fetchBalance` and capability metadata. |
+| Main 3 | Add pure window/evaluation functions in `lib/quotas/` plus storage for quota definitions and manual observations. |
+| Main 4–5 | Store snapshot history; add client polling/threshold logic only. |
+| Side track | Fix cost parsers; extract a usage service shared by route handlers and quota evaluation; add bucket/event tables to the same SQLite database. |
 
 Keep balance snapshots separate from `CostBucket`: a balance is an account state, not spending during an interval. Preserve its native currency. Likewise, a reported quota ratio is not a token bucket.
 
 ### Corrections identified in the current adapters
 
-- **Phase 1: Anthropic input tokens.** Its report returns `uncached_input_tokens`, `cache_read_input_tokens`, and nested `cache_creation` counts. The current adapter reads `input_tokens`, so input totals can incorrectly become zero. Normalize `inputTokens` as uncached + cache reads + cache writes. [Anthropic usage schema](https://platform.claude.com/docs/en/api/beta/organization/usage_report/retrieve_messages)
-- **Phase 1: cache semantics.** Define `inputTokens` as inclusive of cached input; `cachedInputTokens` is a subset and must not be added again. This matches OpenAI’s documented total. [Official OpenAI documentation](https://developers.openai.com/api/reference/resources/admin/subresources/organization/subresources/usage/methods/completions)
-- **Phase 3: OpenAI costs.** `amount.value` is already expressed in its declared currency. Dividing USD values by 100 understates costs. Its cost endpoint supports daily buckets only. [OpenAI cost schema](https://developers.openai.com/api/reference/resources/admin/subresources/organization/subresources/usage/methods/costs)
-- **Phase 3: Anthropic costs.** `amount` is a decimal string in cents, with a separate `currency`; it is not an `{ value, currency }` object. The current parser can therefore return zero. Costs are daily only. [Anthropic cost schema](https://platform.claude.com/docs/en/api/beta/organization/cost_report/retrieve), [reporting guide](https://platform.claude.com/docs/en/manage-claude/usage-cost-api)
+- **Fixed in PR #1: Anthropic input tokens.** Its report returns `uncached_input_tokens`, `cache_read_input_tokens`, and nested `cache_creation` counts. The current adapter reads `input_tokens`, so input totals can incorrectly become zero. Normalize `inputTokens` as uncached + cache reads + cache writes. [Anthropic usage schema](https://platform.claude.com/docs/en/api/beta/organization/usage_report/retrieve_messages)
+- **Fixed in PR #1: cache semantics.** Define `inputTokens` as inclusive of cached input; `cachedInputTokens` is a subset and must not be added again. This matches OpenAI’s documented total. [Official OpenAI documentation](https://developers.openai.com/api/reference/resources/admin/subresources/organization/subresources/usage/methods/completions)
+- **Side track, pending: OpenAI costs.** `amount.value` is already expressed in its declared currency. Dividing USD values by 100 understates costs. Its cost endpoint supports daily buckets only. [OpenAI cost schema](https://developers.openai.com/api/reference/resources/admin/subresources/organization/subresources/usage/methods/costs)
+- **Side track, pending: Anthropic costs.** `amount` is a decimal string in cents, with a separate `currency`; it is not an `{ value, currency }` object. The current parser can therefore return zero. Costs are daily only. [Anthropic cost schema](https://platform.claude.com/docs/en/api/beta/organization/cost_report/retrieve), [reporting guide](https://platform.claude.com/docs/en/manage-claude/usage-cost-api)
 
 For persistence, record account scope, interval, resolution, dimensions, source, and fetch time. Replace refreshed aggregate buckets rather than adding snapshots together. Store events separately and deduplicate by source/event ID. Do not sum report buckets and captured events covering the same activity; select an authoritative source for each metric and interval.
 
@@ -172,7 +163,7 @@ For persistence, record account scope, interval, resolution, dimensions, source,
 
 The official client source also calls `/usages` under `https://api.kimi.com/coding/v1`, with a global base at `https://api.kimi.ai/coding/v1`, using a bearer access token. This is a vendor-client endpoint visible in source, without an established stable public reporting contract. API-key access was not verified here. [Official client source](https://github.com/MoonshotAI/kimi-code/blob/main/packages/oauth/src/managed-usage.ts)
 
-**Recommendation (updated 2026-10-01):** Add official Moonshot balance support in Phase 2 — it is remote and official. **Kimi subscription quotas are ON HOLD**: the only quota-reporting surfaces are the experimental *local* `kimi web` server API (rejected — no local components) and the undocumented hosted `/usages` endpoint (rejected — no official contract); revisit only if Moonshot ships an official remote API. Add captured token history through `/api/ingest` in Phase 4; today that route acknowledges events but stores nothing.
+**Recommendation (updated 2026-10-01):** Add official Moonshot balance support in main-track Phase 2 — it is remote and official. **Kimi subscription quotas are ON HOLD**: the only quota-reporting surfaces are the experimental *local* `kimi web` server API (rejected — no local components) and the undocumented hosted `/usages` endpoint (rejected — no official contract); revisit only if Moonshot ships an official remote API. Captured token history through `/api/ingest` belongs to the side track (persistence/ingest); today that route acknowledges events but stores nothing.
 
 ## 4. Quota model proposal
 
@@ -213,15 +204,17 @@ Each evaluated observation should include usage or ratio, measurement time, actu
 6. Display provider ratios directly, preserving their reported reset time. Do not translate them into tokens or combine them with locally derived estimates.
 7. Keep missing history, delayed reports, and unavailable metrics visible. Daily cost reports cannot establish precise five-hour spending.
 
-Quota settings can live in a local file before Phase 4. Total/lifetime accuracy still requires complete history or an explicit manual opening observation.
+Quota definitions are introduced in main-track Phase 3 and stored server-side alongside connections. Total/lifetime accuracy still requires complete history or an explicit manual opening observation.
 
 ## 5. Risks and open questions
 
-- **API versus subscription usage is the main scope risk.** Existing adapters measure organization API activity. They do not establish Claude Pro/Max or ChatGPT subscription consumption. Confirm which product the user actually wants for each provider before implementing additional collectors.
-- **Phase 1 needs usable credentials and activity.** If neither existing provider is accessible, the initial collection path must change; a blank dashboard is not a useful milestone.
+- **API versus subscription usage — resolved by re-prioritization.** Existing adapters measure organization API activity, not Claude Pro/Max or ChatGPT subscription consumption. The main track now targets subscriptions; API usage is the deferred side track.
+- **Anthropic's quota endpoint is undocumented.** It is used by first-party clients but has no public contract. Keep it behind one adapter, validate responses at runtime, and fail to an explicit "unavailable" state if the shape changes.
+- **OpenAI/ChatGPT exposes no plan-quota API.** ChatGPT quotas can only be user-defined with manual observations (main-track Phase 3).
+- **Phase 1 needs a Claude Pro/Max account and a working OAuth flow.** If the OAuth flow or `org:admin` scope is unavailable to third-party apps, Phase 1 must change approach before more work is built on it.
 - **Configured limits do not reveal consumption.** Subscription credits may depend on models, tools, and provider-specific accounting. A configured cap alone cannot produce truthful progress.
 - **Kimi schemas and plans vary.** Current error documentation distinguishes weekly limits on legacy plans from newer plans. Render reported/configured windows rather than hardcoding a universal set. [Kimi quota rules](https://www.kimi.com/code/docs/en/kimi-code/error-reference.html)
 - **Reporting is delayed and incomplete.** Distinguish fetched-at time from measurement coverage, and preserve refresh failures alongside previously successful data.
-- **Timezone and billing anchors need explicit decisions.** Use UTC for Phase 1; later configure reset timezone, weekly anchor, monthly billing day, and month-end behavior.
+- **Timezone and billing anchors need explicit decisions.** Prefer provider-reported reset times; for user-defined quotas configure reset timezone, weekly anchor, monthly billing day, and month-end behavior.
 - **Shared accounts create overlap.** Multiple keys can expose the same usage and quota pool. Attribution and deduplication must precede cross-plan totals.
-- **Local runtime choices remain open.** Select a supported Node version/SQLite driver in Phase 4. Keep credentials server-side, use loopback by default, and add ingest authentication before accepting external writers.
+- **Local runtime choices remain open.** Select a supported Node version/SQLite driver and OS keyring library in main-track Phase 2. Keep credentials server-side, use loopback by default, and add ingest authentication before accepting external writers.
